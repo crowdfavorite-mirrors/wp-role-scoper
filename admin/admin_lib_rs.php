@@ -189,8 +189,18 @@ class ScoperAdminLib {
 	function get_group_by_name($name) {
 		global $wpdb;
 
-		$query = "SELECT $wpdb->groups_id_col AS ID, $wpdb->groups_name_col AS display_name, $wpdb->groups_descript_col as descript "
-				. " FROM $wpdb->groups_rs WHERE $wpdb->groups_name_col='$name'";
+		$query = $wpdb->prepare(
+			"SELECT 
+				$wpdb->groups_id_col AS ID,
+				$wpdb->groups_name_col AS display_name,
+				$wpdb->groups_descript_col as descript
+			FROM
+				$wpdb->groups_rs
+			WHERE
+			 	$wpdb->groups_name_col=%s
+			",
+			$name
+		);
 
 		$result = scoper_get_row( $query );
 		return $result;

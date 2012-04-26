@@ -45,7 +45,18 @@ class UserGroups_tp {
 		if( ! UserGroups_tp::isValidName($name) )
 			return false;
 
-		$insert = "INSERT INTO $wpdb->groups_rs ($wpdb->groups_name_col, $wpdb->groups_descript_col) VALUES ('$name','$description')";
+		$insert = $wpdb->prepare(
+			"INSERT INTO $wpdb->groups_rs (
+				$wpdb->groups_name_col,
+				$wpdb->groups_descript_col
+			)
+			VALUES (
+				%s,
+				%s
+			)",
+			$name,
+			$description
+		);
 		scoper_query( $insert );
 
 		wpp_cache_flush_group('all_usergroups');
