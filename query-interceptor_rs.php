@@ -169,6 +169,12 @@ class QueryInterceptor_RS
 		if ( ! $taxonomies )
 			return $where;
 	
+		$enabled_taxonomies = array_keys( array_intersect( scoper_get_option( 'use_taxonomies' ), array( 1, '1', true ) ) );
+		$enabled_taxonomies []= 'link_category';
+
+		if ( ! array_intersect( $taxonomies, $enabled_taxonomies ) )
+			return $where;
+
 		if ( $post_type )
 			$post_type = (array) $post_type;
 	
@@ -185,7 +191,7 @@ class QueryInterceptor_RS
 			
 			$taxonomy_sources[$src_name] = true;
 		}
-
+		
 		if ( count($taxonomy_sources) != 1 )
 			return $where;
 			
@@ -207,6 +213,9 @@ class QueryInterceptor_RS
 		}
 		
 		// prevent hardway-admin filtering of any queries which may be triggered by this filter
+		if ( ! isset( $GLOBALS['scoper_status'] ) )
+			$GLOBALS['scoper_status'] = (object) array();
+		
 		$GLOBALS['scoper_status']->querying_db = true;
 		
 		// Note that term management capabilities (i.e. "manage_categories") are implemented via Term Roles on the Posts data source, with taxonomy as the object type
@@ -293,6 +302,9 @@ class QueryInterceptor_RS
 		}
 			
 		// prevent hardway-admin filtering of any queries which may be triggered by this filter
+		if ( ! isset($GLOBALS['scoper_status']) )
+			$GLOBALS['scoper_status'] = (object) array();
+		
 		$GLOBALS['scoper_status']->querying_db = true;
 			
 		if ( empty($skip_teaser) ) {
@@ -343,7 +355,7 @@ class QueryInterceptor_RS
 				// The listed objects are attachments, so query filter is based on objects they inherit from
 				$admin_others_attached = scoper_get_option( 'admin_others_attached_files' );
 				$admin_others_unattached = scoper_get_option( 'admin_others_unattached_files' );
-				
+
 				if ( ( ! $admin_others_attached ) || ! $admin_others_unattached )
 					$can_edit_others_blogwide = $this->scoper->user_can_edit_blogwide( 'post', '', array( 'require_others_cap' => true, 'status' => 'publish' ) );
 
@@ -570,8 +582,10 @@ class QueryInterceptor_RS
 			// If the passed request contains a single status criteria, maintain that status exclusively (otherwise include status-specific conditions for each available status)
 			// (But not if user is anon and hidden content teaser is enabled.  In that case, we need to replace the default "status=publish" clause)
 			$matches = array();
-			if ( $num_matches = preg_match_all( "/{$src_table}.$col_status\s*=\s*'([^']+)'/", $where, $matches ) )
+			if ( $num_matches = preg_match_all( "/{$src_table}.$col_status\s*=\s*'([^']+)'/", $where, $matches ) ) {
+				$where = str_replace( $matches[0][0], "( {$matches[0][0]} )", $where );
 				$status_clause_pos = strpos( $where, $matches[0][0] ); // note the match position for use downstream
+			}
 			
 			if ( 1 == $num_matches ) {
 				$use_status = $matches[1][0];
@@ -695,7 +709,7 @@ class QueryInterceptor_RS
 				$check_otype = ( count($tease_otypes) && in_array('post', $tease_otypes) ) ? 'post' : $tease_otypes[0];
 
 			// extra line of defense: even if upstream logic goes wrong, never disclose a private item to anon user (but if the where clause was passed in with explicit status=private, must include our condition)
-			if ( ('private' == $status_name) && ! $force_single_status && empty($GLOBALS['current_user']->ID) && ( ! $tease_otypes || scoper_get_otype_option('teaser_hide_private', $src_name, $check_otype) ) )
+			if ( ('private' == $status_name) && ! $force_single_status && empty($GLOBALS['current_user']->ID) && ! defined( 'SCOPER_ANON_METAGROUP' ) && ( ! $tease_otypes || scoper_get_otype_option('teaser_hide_private', $src_name, $check_otype) ) )
 				unset( $status_where[$status_name] );
 			else
 				$status_where[$status_name] = agp_implode(' ) OR ( ', $status_where[$status_name], ' ( ', ' ) ');
@@ -778,6 +792,11 @@ class QueryInterceptor_RS
 				if ( $col_status && $status_name && strpos($where, $basic_status_clause[$status_name]) ) {
 					// Replace existing status clause with our scoped equivalent
 					$where = str_replace($basic_status_clause[$status_name], "$status_clause", $where);
+
+					// account for padding and parentheses that may have been inserted ahead of first status clause
+					$matches = array();
+					if ( $num_matches = preg_match_all( "/{$src_table}.$col_status\s*=\s*'([^']+)'/", $where, $matches ) )
+						$status_clause_pos = strpos( $where, $matches[0][0] ); // note the match position for use downstream
 
 				} elseif ( $status_clause_pos && ( $status_clause != '1=2' ) ) {
 					// This status was not in the original query, but we now insert it with scoping clause at the position of another existing status clause
@@ -1169,10 +1188,12 @@ class QueryInterceptor_RS
 					// which are non-restricted (i.e. blend in blog assignments) for a qualifying role which the user has blog-wide 
 					//
 					// note: $reqd_caps function arg is used; qualify_terms will ignore reqd_caps element in args array
-					if ( $user_terms = $this->scoper->qualify_terms_daterange($reqd_caps, $taxonomy, $role_handle_arg, $args) ) {
-						if ( ! isset($term_count[$taxonomy]) )
-							$term_count[$taxonomy] = $this->scoper->get_terms($taxonomy, UNFILTERED_RS, COL_COUNT_RS);
-							
+					if ( ! isset($term_count[$taxonomy]) )
+						$term_count[$taxonomy] = $this->scoper->get_terms($taxonomy, UNFILTERED_RS, COL_COUNT_RS);
+
+					if ( ! $term_count[$taxonomy] ) {
+						$all_terms_qualified[''][$taxonomy] = true;
+					} elseif ( $user_terms = $this->scoper->qualify_terms_daterange($reqd_caps, $taxonomy, $role_handle_arg, $args) ) {
 						foreach ( array_keys($user_terms) as $date_key ) {
 							if ( count($user_terms[$date_key]) ) {
 								// don't bother applying term requirements if user has cap for all terms in this taxonomy
@@ -1249,7 +1270,7 @@ class QueryInterceptor_RS
 
 		// since object roles are not pre-loaded prior to this call, role date limits are handled via subselect, within the date_key = '' iteration
 		$object_roles_duration_clause = scoper_get_duration_clause();
-				
+
 				
 		// implode the array of where criteria into a query as concisely as possible 
 		foreach ( $where as $date_key => $objscope_clauses ) {
@@ -1334,7 +1355,7 @@ class QueryInterceptor_RS
 
 								static $cache_obj_ids = array();
 
-								if ( 'post.php' == $GLOBALS['pagenow'] && ! empty($_REQUEST['action']) || did_action( 'save_post' ) || ! empty($_GET['doaction']) )
+								if ( in_array( $GLOBALS['pagenow'], array( 'post.php', 'press-this.php' ) ) && ! empty($_REQUEST['action']) || did_action( 'save_post' ) || ! empty($_GET['doaction']) )
 									$force_refresh = true;		
 
 								$objrole_subselect = "SELECT DISTINCT uro.obj_or_term_id FROM $wpdb->user2role2object_rs AS uro WHERE uro.role_type = '$role_spec->role_type' AND uro.scope = 'object' AND uro.assign_for IN ('entity', 'both') AND uro.role_name IN ($role_in) AND uro.src_or_tx_name = '$src_name' $object_roles_duration_clause $u_g_clause ";

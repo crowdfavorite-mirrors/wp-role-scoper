@@ -118,7 +118,7 @@ class CapInterceptor_RS
 		
 		// work around bug in mw_EditPost method (requires publish_pages AND publish_posts cap)
 		if ( defined('XMLRPC_REQUEST') && ( 'publish_posts' == $orig_reqd_caps[0] ) ) {
-			if ( 'page' == $GLOBALS['xmlrpc_post_type_rs'] ) {
+			if ( ! empty($GLOBALS['xmlrpc_post_type_rs']) && ( 'page' == $GLOBALS['xmlrpc_post_type_rs'] ) ) {
 				return array( 'publish_posts' => true );
 			}
 		}
@@ -163,7 +163,7 @@ class CapInterceptor_RS
 			$this->scoper->refresh_blogroles();
 			
 		$object_id = ( isset($args[2]) ) ? (int) $args[2] : 0;
-
+		
 		// WP passes comment ID with 'edit_comment' metacap
 		if ( $object_id && ( 'edit_comment' == $args[0] ) ) {
 			if ( ! in_array( 'moderate_comments', $rs_reqd_caps ) ) {	 // as of WP 3.2.1, 'edit_comment' maps to related post's 'edit_post' caps without requiring moderate_comments
@@ -190,7 +190,7 @@ class CapInterceptor_RS
 		);
 
 		// for scoped menu management roles, satisfy edit_theme_options cap requirement
-		if ( ( 'edit_theme_options' == $orig_reqd_caps[0] ) && empty( $wp_blogcaps['edit_theme_options'] ) ) {
+		if ( array_key_exists(0, $orig_reqd_caps) && ( 'edit_theme_options' == $orig_reqd_caps[0] ) && empty( $wp_blogcaps['edit_theme_options'] ) ) {
 			if ( in_array( $GLOBALS['pagenow'], array( 'nav-menus.php', 'admin-ajax.php' ) ) || $doing_admin_menus ) {
 				$key = array_search( 'edit_theme_options', $rs_reqd_caps );
 				if ( false !== $key ) {
@@ -210,7 +210,7 @@ class CapInterceptor_RS
 			// required capabilities correspond to multiple data sources
 			return $wp_blogcaps;		
 		}
-
+		
 		// slight simplification: assume a single cap object type for a few cap substitution checks
 		$is_taxonomy_cap = $this->scoper->cap_defs->member_property( reset($rs_reqd_caps), 'is_taxonomy_cap' );
 		
@@ -222,7 +222,7 @@ class CapInterceptor_RS
 		} elseif ( is_admin() && ( 'edit-tags.php' == $GLOBALS['pagenow'] ) && ( 'link_category' == $_REQUEST['taxonomy'] ) ) {
 			$src_name = 'link';
 			$object_type = 'link_category';
-		} elseif ( in_array( $orig_reqd_caps[0], array( 'manage_nav_menus', 'edit_theme_options' ) ) ) {
+		} elseif ( array_key_exists(0, $orig_reqd_caps) && in_array( $orig_reqd_caps[0], array( 'manage_nav_menus', 'edit_theme_options' ) ) ) {
 			$src_name = 'nav_menu';
 		}
 
@@ -246,7 +246,7 @@ class CapInterceptor_RS
 							if ( 'revision' == $object_type ) {
 								if ( $_orig_post = get_post($_parent->post_parent) ) {
 									$object_type = $_orig_post->post_type;
-									$object_id = $orig_post->ID;
+									$object_id = $_orig_post->ID;
 								}
 							}
 							
@@ -262,7 +262,7 @@ class CapInterceptor_RS
 		}
 		
 		// =====================================================================================================================================
-
+		
 		// ======================================== SUBVERT MISGUIDED CAPABILITY REQUIREMENTS ==================================================
 		if ( 'post' == $src_name ) {	
 			if ( ! $is_taxonomy_cap ) {
@@ -283,7 +283,7 @@ class CapInterceptor_RS
 					foreach( $replace_post_caps as $post_cap_name ) {
 						$key = array_search( $post_cap_name, $rs_reqd_caps );
 
-						if ( ( false !== $key ) && ! $doing_admin_menus && in_array( $pagenow, array( 'edit.php', 'post.php', 'post-new.php', 'admin-ajax.php', 'upload.php', 'media.php' ) ) ) {				
+						if ( ( false !== $key ) && ! $doing_admin_menus && in_array( $pagenow, array( 'edit.php', 'post.php', 'post-new.php', 'press-this.php', 'admin-ajax.php', 'upload.php', 'media.php' ) ) ) {				
 							$rs_reqd_caps[$key] = $object_type_obj->cap->$post_cap_name;
 							$modified_caps = true;
 						}
@@ -329,7 +329,7 @@ class CapInterceptor_RS
 		if ( 'post' == $src_name ) {
 			if ( $object_id ) {
 				if ( $_post = get_post($object_id) ) {
-					if ( ( 'auto-draft' == $_post->post_status ) && ! empty($_POST['action']) ) { // && ( 'autosave' == $_POST['action'] ) ) {
+					if ( ( 'auto-draft' == $_post->post_status ) ) { // && ! empty($_POST['action']) )
 						$object_id = 0;
 						
 						if ( ! $doing_admin_menus )
@@ -441,7 +441,7 @@ class CapInterceptor_RS
 			$object_type = $_post->post_type;
 			$object_type_obj = cr_get_type_object( $src_name, $object_type );
 			
-			if ( defined('RVY_VERSION') && in_array( $pagenow, array('edit.php', 'edit-tags.php', 'admin-ajax.php') ) && ! empty($_REQUEST['action']) ) {
+			if ( defined('RVY_VERSION') && in_array( $pagenow, array('edit.php', 'edit-tags.php', 'admin-ajax.php') ) && ( ! empty($_REQUEST['action']) && ( -1 != $_REQUEST['action'] ) ) ) {
 				$rs_reqd_caps = Rvy_Helper::fix_table_edit_reqd_caps( $rs_reqd_caps, $args[0], $_post, $object_type_obj );
 			}
 
@@ -486,7 +486,7 @@ class CapInterceptor_RS
 		
 		// Workaround to deal with WP core's checking of publish cap prior to storing categories
 		// Store terms to DB in advance of any cap-checking query which may use those terms to qualify an operation		
-		if ( ! empty($_POST['action']) && ( ('editpost' == $_POST['action']) || ('autosave' == $_POST['action']) ) ) {
+		if ( ! empty($_REQUEST['action']) && ( in_array( $_REQUEST['action'], array( 'editpost', 'post' ) ) || ('autosave' == $_REQUEST['action']) ) ) {
 			if ( array_intersect( array( 'publish_posts', 'edit_posts', $object_type_obj->cap->publish_posts,  $object_type_obj->cap->edit_posts ), $rs_reqd_caps) ) {
 				$uses_taxonomies = scoper_get_taxonomy_usage( $src_name, $object_type );
 				
@@ -527,6 +527,7 @@ class CapInterceptor_RS
 				// also avoid chicken-egg situation when publish cap is granted by a propagating page role
 				if ( $object_type_obj->hierarchical && isset( $_POST['parent_id'] ) ) {
 					if ( $_POST['parent_id'] != get_post_field( 'post_parent', $object_id ) ) {
+						global $wpdb;
 						$set_parent = $GLOBALS['scoper_admin_filters']->flt_page_parent( $_POST['parent_id'] );
 						$GLOBALS['wpdb']->query( "UPDATE $wpdb->posts SET post_parent = '$set_parent' WHERE ID = '$object_id'" );
 						
@@ -614,14 +615,14 @@ class CapInterceptor_RS
 		// $force_refresh = 'async-upload.php' == $pagenow;
 		
 		// Page refresh following publishing of new page by users who can edit by way of Term Role fails without this workaround
-		if ( ! empty( $_POST ) && ( defined( 'SCOPER_CACHE_SAFE_MODE' ) || ( ( 'post.php' == $pagenow ) && ( $args[0] == $object_type_obj->cap->edit_post ) ) ) ) {
+		if ( ! empty( $_POST ) && ( defined( 'SCOPER_CACHE_SAFE_MODE' ) || ( in_array( $pagenow, array( 'post.php', 'press-this.php' ) ) && ( $args[0] == $object_type_obj->cap->edit_post ) ) ) ) {
 			$force_refresh = true;
 			$cache_tested_ids = array();
 			$cache_okay_ids = array();
 			$cache_where_clause = array();
 		} else
 			$force_refresh = false;
-			
+
 		// Check whether this object id was already tested for the same reqd_caps in a previous execution of this function within the same http request
 		if ( $force_refresh || ! isset($cache_tested_ids[$src_name][$object_type][$capreqs_key][$object_id]) ) {
 		//if ( ! isset($cache_tested_ids[$src_name][$object_type][$capreqs_key][$object_id]) ) {
@@ -712,7 +713,7 @@ class CapInterceptor_RS
 		$rs_reqd_caps = array_fill_keys( $rs_reqd_caps, true );
 		
 		if ( ! $this_id_okay ) {
-			if ( ( 'edit_posts' == $orig_reqd_caps[0] ) && strpos( $_SERVER['REQUEST_URI'], 'async-upload.php' ) ) {  // temp workaround for ACF with Revisionary
+			if ( array_key_exists(0, $orig_reqd_caps) && ( 'edit_posts' == $orig_reqd_caps[0] ) && strpos( $_SERVER['REQUEST_URI'], 'async-upload.php' ) ) {  // temp workaround for ACF with Revisionary
 				return $wp_blogcaps;
 			}
 

@@ -69,9 +69,9 @@ if( basename(__FILE__) == basename($_SERVER['SCRIPT_FILENAME']) )
 		$args = array_merge( $defaults, (array) $args );
 		extract($args);
 			
-		if ( 'post' == $src_name ) {		
-			global $scoper_admin_filters;
-			$is_new_object = empty($scoper_admin_filters->last_post_status[$object_id]) || ( 'new' == $scoper_admin_filters->last_post_status[$object_id] ) || ( 'auto-draft' == $scoper_admin_filters->last_post_status[$object_id] );
+		if ( 'post' == $src_name ) {
+			global $wpdb;
+			$is_new_object = ! get_post_meta($object_id, '_scoper_custom', true) && ! $wpdb->get_var( "SELECT COUNT(*) FROM $wpdb->user2role2object_rs WHERE scope = 'object' AND src_or_tx_name = 'post' AND obj_or_term_id = '$object_id'" );
 		} else
 			$is_new_object = true;  // for other data sources, we have to assume object is new unless it has a role or restriction stored already.
 
@@ -85,7 +85,7 @@ if( basename(__FILE__) == basename($_SERVER['SCRIPT_FILENAME']) )
 		$set_parent = 0;
 		
 		if ( $col_parent = $scoper->data_sources->member_property($src_name, 'cols', 'parent') ) {
-			if ( in_array( $GLOBALS['pagenow'], array( 'post.php', 'post-new.php' ) ) ) {
+			if ( in_array( $GLOBALS['pagenow'], array( 'post.php', 'post-new.php', 'press-this.php' ) ) ) {
 				if ( isset($_POST[$col_parent]) ) 
 					$set_parent = $_POST[$col_parent];
 			} else {
@@ -430,18 +430,28 @@ if( basename(__FILE__) == basename($_SERVER['SCRIPT_FILENAME']) )
 	
 	// Enforce any page parent filtering which may have been dictated by the flt_post_status filter, which executes earlier.
 	function scoper_flt_page_parent ($parent_id) {
-		if ( ! empty( $_POST['post_ID'] ) )
-			if ( $parent_id == $_POST['post_ID'] )	// normal revision save
-				return $parent_id;
+		if ( 'no_parent_filter' == scoper_get_option( 'lock_top_pages' ) )
+			return (int) $parent_id;
+	
+		if ( ! empty($_REQUEST['post_ID']) ) 
+			$post_id = $_REQUEST['post_ID'];
+		elseif ( ! empty($_REQUEST['post_id']) )
+			$post_id = $_REQUEST['post_id'];
+		else
+			return (int) $parent_id;
+			
+		if ( ! empty( $post_id ) )
+			if ( $parent_id == $post_id )	// normal revision save
+				return (int) $parent_id;
 		
 		if ( defined( 'RVY_VERSION' ) ) {
 			global $revisionary;
 			if ( ! empty($revisionary->admin->revision_save_in_progress) )
-				return $parent_id;
+				return (int) $parent_id;
 		}
 		
 		if ( empty($_POST['post_type']) )
-			return $parent_id;
+			return (int) $parent_id;
 		
 		// Make sure the selected parent is valid.  Merely an anti-hacking precaution to deal with manually fudged POST data		
 		global $scoper, $wpdb;
@@ -452,7 +462,7 @@ if( basename(__FILE__) == basename($_SERVER['SCRIPT_FILENAME']) )
 		$args = array();
 		$args['alternate_reqd_caps'][0] = array("create_child_{$plural_name}");
 
-		if ( $descendant_ids = scoper_get_page_descendant_ids( $_POST['post_ID'] ) )
+		if ( $descendant_ids = scoper_get_page_descendant_ids( $post_id ) )
 			$exclusion_clause = "AND ID NOT IN('" . implode( "','", $descendant_ids ) . "')";
 		else
 			$exclusion_clause = '';
@@ -461,7 +471,7 @@ if( basename(__FILE__) == basename($_SERVER['SCRIPT_FILENAME']) )
 		$qry_parents = apply_filters('objects_request_rs', $qry_parents, 'post', $post_type, $args);
 		$valid_parents = scoper_get_col($qry_parents);
 				
-		$post = get_post( $_POST['post_ID'] );
+		$post = get_post( $post_id );
 		
 		if ( $parent_id ) {
 			if ( $post && ! in_array($parent_id, $valid_parents) ) {
@@ -481,13 +491,13 @@ if( basename(__FILE__) == basename($_SERVER['SCRIPT_FILENAME']) )
 				} elseif ( $valid_parents ) {
 					// otherwise default to a valid parent
 					sort( $valid_parents );
-					$parent_id = current($valid_parents);
-					$_POST['parent_id'] = $parent_id; // for subsequent post_status filter
+					$parent_id = reset($valid_parents);
+					$_POST['parent_id'] = (int) $parent_id; // for subsequent post_status filter
 				}
 			}
 		}
 			
-		return $parent_id;
+		return (int) $parent_id;
 	}
 	
 	function scoper_get_page_descendant_ids($page_id, $pages = '' ) {
@@ -827,6 +837,11 @@ function scoper_inherit_parent_roles($obj_or_term_id, $scope, $src_or_tx_name, $
 }
 
 function cr_get_posted_object_terms( $taxonomy ) {
+	if ( defined('XMLRPC_REQUEST') ) {
+		require_once( dirname(__FILE__).'/filters-admin-xmlrpc_rs.php' );
+		return _rs_get_posted_xmlrpc_terms( $taxonomy );
+	}
+
 	if ( 'category' == $taxonomy ) {
 		if ( ! empty($_POST['post_category']) )
 			return $_POST['post_category'];
