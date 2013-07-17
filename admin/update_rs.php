@@ -9,6 +9,13 @@ function scoper_version_updated( $prev_version ) {
 
 	// single-pass do loop to easily skip unnecessary version checks
 	do {
+		// role_name column width of 32 was too narrow for long post type / taxonomy names. Thanks to http://wordpress.org/support/profile/vmattila
+		if ( version_compare( $prev_version, '1.3.57', '<') ) {
+			global $wpdb;
+			scoper_query( "ALTER TABLE $wpdb->user2role2object_rs MODIFY role_name VARCHAR(64) NOT NULL" );
+			scoper_query( "ALTER TABLE $wpdb->role_scope_rs MODIFY role_name VARCHAR(64) NOT NULL" );
+		}
+
 		// roles were stored with invalid assign_for value under some conditions
 		if ( version_compare( $prev_version, '1.3.45-beta', '<') ) {
 			global $wpdb;
@@ -153,7 +160,10 @@ function scoper_sync_wproles($user_ids = '', $role_name_arg = '', $blog_id_arg =
 	
 	$wp_rolenames = array_keys($wp_roles->role_objects);
 
-	$uro_table = ( $blog_id_arg ) ? $wpdb->base_prefix . $blog_id_arg . '_' . 'user2role2object_rs' : $wpdb->user2role2object_rs;
+	if ( $blog_id_arg )
+		$uro_table = ( $blog_id_arg > 1 ) ? $wpdb->base_prefix . $blog_id_arg . '_' . 'user2role2object_rs' : $wpdb->base_prefix . 'user2role2object_rs';
+	else
+		$uro_table = $wpdb->user2role2object_rs;
 
 	$groups_table = $wpdb->groups_rs;
 	$user2group_table = $wpdb->user2group_rs;
@@ -463,7 +473,6 @@ function delete_restrictions_orphaned_from_item( $scope, $src_or_tx_name ) {
 }
 */
 
-
 // On first-time install, prevent WP/RS role mismatch by disabling RS rolecaps that are missing from corresponding default WP roles
 function scoper_set_default_rs_roledefs() {
 	global $wp_roles, $scoper;
@@ -473,7 +482,8 @@ function scoper_set_default_rs_roledefs() {
 	if ( scoper_get_option( 'disabled_role_caps', $sitewide ) || scoper_get_option( 'default_disabled_role_caps', $sitewide ) )
 		return;
 
-	$default_role_caps = cr_role_caps();
+	require_once( SCOPER_ABSPATH . '/definitions_cr.php');	
+	$default_role_caps = (array) cr_role_caps();
 
 	$wp_role_sync = array( 
 		'rs_post_contributor' 	=> 'contributor',
@@ -487,9 +497,12 @@ function scoper_set_default_rs_roledefs() {
 	$disable_caps = array();
 	
 	foreach ( $wp_role_sync as $rs_role_handle => $wp_role_name ) {
-		if ( isset( $wp_roles->role_objects[ $wp_role_name ] ) )
-			if ( $wp_missing_caps = array_diff_key( $default_role_caps[$rs_role_handle], $wp_roles->role_objects[$wp_role_name]->capabilities ) )
+		if ( isset( $wp_roles->role_objects[ $wp_role_name ] ) ) {
+			$def_caps = ( isset($default_role_caps[$rs_role_handle]) ) ? (array) $default_role_caps[$rs_role_handle] : array();
+			
+			if ( $wp_missing_caps = array_diff_key( $def_caps, $wp_roles->role_objects[$wp_role_name]->capabilities ) )
 				$disable_caps[$rs_role_handle] = $wp_missing_caps;
+		}
 	}
 
 	if ( $disable_caps ) {

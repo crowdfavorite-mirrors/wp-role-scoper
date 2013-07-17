@@ -3,7 +3,7 @@
 	// Removes terms for which the user has edit cap, but not edit_[status] cap
 	// If the removed terms are already stored to the post (by a user who does have edit_[status] cap), they will be reinstated by reinstate_hidden_terms
 	function scoper_filter_terms_for_status($taxonomy, $selected_terms, &$user_terms, $args = array() ) {
-		if ( defined( 'DISABLE_QUERYFILTERS_RS' ) || ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) )
+		if ( defined( 'DISABLE_QUERYFILTERS_RS' ) ) // || ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) )
 			return $selected_terms;
 			
 		global $scoper;
@@ -17,7 +17,7 @@
 		
 		if ( ! $src = $scoper->data_sources->get($tx->object_source) )
 			return $selected_terms;
-
+			
 		if ( ! isset($src->statuses) || (count($src->statuses) < 2) )
 			return $selected_terms;
 			
@@ -26,12 +26,9 @@
 		
 		if ( ! $status ) {
 			// determine current post status
-			if ( defined( 'XMLRPC_REQUEST' ) && ! empty($GLOBALS['scoper_xmlrpc_post_status'] ) ) {
-				$status = $GLOBALS['scoper_xmlrpc_post_status'];
-			} else {
-				if ( ! $status = $scoper->data_sources->get_from_http_post('status', $src) )
-					if ( $object_id )
-						$status = $scoper->data_sources->get_from_db('status', $src, $object_id);
+			if ( ! $status = $scoper->data_sources->get_from_http_post('status', $src) ) {
+				if ( $object_id )
+					$status = $scoper->data_sources->get_from_db('status', $src, $object_id);
 			}
 		}
 
